@@ -85,6 +85,8 @@ resource "yandex_mdb_kafka_cluster" "mkf-cluster-source" {
         disk_type_id       = "network-ssd"
         resource_preset_id = "s2.micro" # 2 vCPU, 8 GB
       }
+
+      kafka_config {}
     }
 
     zones = [
@@ -137,6 +139,8 @@ resource "yandex_mdb_kafka_cluster" "mkf-cluster-target" {
         disk_type_id       = "network-ssd"
         resource_preset_id = "s2.micro" # 2 vCPU, 8 GB
       }
+      
+      kafka_config {}
     }
 
     zones = [
