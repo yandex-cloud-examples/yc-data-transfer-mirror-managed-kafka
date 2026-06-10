@@ -12,13 +12,12 @@ locals {
   source_user_password = "" # Apache Kafka® user's password
 
   # Target Managed Service for Apache Kafka® cluster settings:
-  target_kf_version = "" # Apache Kafka® version
+  target_kf_version    = "" # Apache Kafka® version
+  target_user_name     = "" # Username of the Apache Kafka® cluster
+  target_user_password = "" # Apache Kafka® user's password
 
-  # Specify these settings ONLY AFTER the YDB database is created. Then run "terraform apply" command again.
-  # You should set up the target endpoint using the management console to obtain its ID
-  source_endpoint_id = "" # Set the source endpoint id
-  target_endpoint_id = "" # Set the target endpoint id
-  transfer_enabled   = 0  # Value '0' disables the transfer creation before the source endpoint is created manually. After that, set to '1' to enable the transfer.
+  # Specify this setting ONLY AFTER the clusters are created. Then run "terraform apply" command again.
+  transfer_enabled   = 0  # Value '0' disables the creation of endpoints and transfer. Set to '1' to create endpoints and enable the transfer.
 
   # The following settings are predefined. Change them only if necessary.
   network_name        = "mkf_network"              # Name of the network
@@ -27,7 +26,7 @@ locals {
   source_cluster_name = "mkf-cluster-source"       # Name of the Apache Kafka® source cluster
   source_topic_name   = "sensors"                  # Name of the Apache Kafka® topic for the source cluster
   target_cluster_name = "mkf-cluster-target"       # Name of the Apache Kafka® target cluster
-  target_topic_name   = "sensors"                  # Name of the Apache Kafka® topic for the target cluster
+  target_topic_name   = "measurements"             # Name of the Apache Kafka® topic for the target cluster
   transfer_name       = "transfer-from-mkf-to-mkf" # Name of the transfer between the Managed Service for Apache Kafka® clusters
 }
 
@@ -86,6 +85,8 @@ resource "yandex_mdb_kafka_cluster" "mkf-cluster-source" {
         disk_type_id       = "network-ssd"
         resource_preset_id = "s2.micro" # 2 vCPU, 8 GB
       }
+
+      kafka_config {}
     }
 
     zones = [
@@ -99,7 +100,7 @@ resource "yandex_mdb_kafka_cluster" "mkf-cluster-source" {
 }
 
 # Topic of the Managed Service for Apache Kafka® source cluster
-resource "yandex_mdb_kafka_topic" "sensors-source" {
+resource "yandex_mdb_kafka_topic" "topic_source" {
   cluster_id         = yandex_mdb_kafka_cluster.mkf-cluster-source.id
   name               = local.source_topic_name
   partitions         = 3
@@ -112,11 +113,11 @@ resource "yandex_mdb_kafka_user" "mkf-user-source" {
   name       = local.source_user_name
   password   = local.source_user_password
   permission {
-    topic_name = yandex_mdb_kafka_topic.sensors-source.name
+    topic_name = yandex_mdb_kafka_topic.topic_source.name
     role       = "ACCESS_ROLE_CONSUMER"
   }
   permission {
-    topic_name = yandex_mdb_kafka_topic.sensors-source.name
+    topic_name = yandex_mdb_kafka_topic.topic_source.name
     role       = "ACCESS_ROLE_PRODUCER"
   }
 }
@@ -129,14 +130,17 @@ resource "yandex_mdb_kafka_cluster" "mkf-cluster-target" {
   security_group_ids = [yandex_vpc_security_group.mkf_security_group.id]
 
   config {
-    brokers_count = 1
-    version       = local.target_kf_version
+    assign_public_ip = true
+    brokers_count    = 1
+    version          = local.target_kf_version
     kafka {
       resources {
         disk_size          = 10 # GB
         disk_type_id       = "network-ssd"
         resource_preset_id = "s2.micro" # 2 vCPU, 8 GB
       }
+      
+      kafka_config {}
     }
 
     zones = [
@@ -150,35 +154,95 @@ resource "yandex_mdb_kafka_cluster" "mkf-cluster-target" {
 }
 
 # Topic of the Managed Service for Apache Kafka® target cluster
-resource "yandex_mdb_kafka_topic" "sensors-target" {
+resource "yandex_mdb_kafka_topic" "topic_target" {
   cluster_id         = yandex_mdb_kafka_cluster.mkf-cluster-target.id
   name               = local.target_topic_name
   partitions         = 1
   replication_factor = 1
 }
 
-# User of the Managed service for the Apache Kafka ® target cluster
+# User of the Managed service for the Apache Kafka® target cluster
 resource "yandex_mdb_kafka_user" "mkf-user-target" {
   cluster_id = yandex_mdb_kafka_cluster.mkf-cluster-target.id
-  name       = local.source_user_name
-  password   = local.source_user_password
+  name       = local.target_user_name
+  password   = local.target_user_password
   permission {
-    topic_name = yandex_mdb_kafka_topic.sensors-target.name
+    topic_name = yandex_mdb_kafka_topic.topic_target.name
     role       = "ACCESS_ROLE_CONSUMER"
   }
   permission {
-    topic_name = yandex_mdb_kafka_topic.sensors-target.name
+    topic_name = yandex_mdb_kafka_topic.topic_target.name
     role       = "ACCESS_ROLE_PRODUCER"
   }
 }
 
 # Data Transfer infrastructure
 
+resource "yandex_datatransfer_endpoint" "mkf_source_endpoint" {
+  description = "Source endpoint for the Managed Service for Apache Kafka® cluster"
+  count       = local.transfer_enabled
+  name        = "mkf-source-endpoint"
+
+  settings {
+    kafka_source {
+      connection {
+        cluster_id = yandex_mdb_kafka_cluster.mkf-cluster-source.id
+      }
+
+      auth {
+        sasl {
+          user = local.source_user_name
+
+          password {
+            raw = local.source_user_password
+          }
+        }
+      }
+
+      topic_names = [local.source_topic_name]
+    }
+  }
+}
+
+resource "yandex_datatransfer_endpoint" "mkf_target_endpoint" {
+  description = "Target endpoint for the Managed Service for Apache Kafka® target cluster"
+  count       = local.transfer_enabled
+  name        = "mkf-target-endpoint"
+
+  settings {
+    kafka_target {
+      connection {
+        cluster_id = yandex_mdb_kafka_cluster.mkf-cluster-target.id
+      }
+
+      auth {
+        sasl {
+          user = local.target_user_name
+
+          password {
+            raw = local.target_user_password
+          }
+        }
+      }
+
+      topic_settings {
+        topic {
+          topic_name = local.target_topic_name
+        }
+      }
+
+      serializer {
+        serializer_auto {}
+      }
+    }
+  }
+}
+
 resource "yandex_datatransfer_transfer" "mkf-mkf-transfer" {
   description = "Transfer between the Managed Service for Apache Kafka® clusters"
   count       = local.transfer_enabled
   name        = local.transfer_name
-  source_id   = local.source_endpoint_id
-  target_id   = local.target_endpoint_id
+  source_id   = yandex_datatransfer_endpoint.mkf_source_endpoint[0].id
+  target_id   = yandex_datatransfer_endpoint.mkf_target_endpoint[0].id
   type        = "INCREMENT_ONLY" # Replicate data from the source Apache Kafka® topic
 }
