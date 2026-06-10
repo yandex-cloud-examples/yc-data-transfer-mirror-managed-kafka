@@ -16,7 +16,7 @@ locals {
   target_user_name     = "" # Username of the Apache Kafka® cluster
   target_user_password = "" # Apache Kafka® user's password
 
-  # Set after the source and target Managed Service for Apache Kafka® clusters are created. Then run "terraform apply" to create Data Transfer endpoints and transfer.
+  # Specify this setting ONLY AFTER the clusters are created. Then run "terraform apply" command again.
   transfer_enabled   = 0  # Value '0' disables the creation of endpoints and transfer. Set to '1' to create endpoints and enable the transfer.
 
   # The following settings are predefined. Change them only if necessary.
